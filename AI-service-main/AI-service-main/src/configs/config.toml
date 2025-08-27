@@ -1,0 +1,56 @@
+[defaultmodels.default-models]
+chat_model = "deepseek"
+reasoner_model = "deepseek-v3"
+embedding_model = "doubao-embedding"
+chat_model_provider = "-huoshan"
+reasoner_model_provider = "-huoshan"
+embedding_model_provider = "-huoshan"
+
+[models.deepseek]
+model_name = "deepseek"
+model_key = "deepseek-chat"
+base_url = "https://api.deepseek.com/v1"
+api_key = "${DEEPSEEK_API_KEY}"
+max_tokens = 2048
+temperature = 0.7
+
+[models.doubao-embedding-huoshan]
+model_name = "doubao"
+model_key = "ep-20250516183114-c4kk4"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_key = "${HUOSHAN_API_KEY}"
+max_tokens = 2048
+temperature = 0.7
+
+[models.deepseek-huoshan]
+model_name = "deepseek"
+model_key = "ep-20250523094525-d9zzp"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_key = "${HUOSHAN_API_KEY}"
+max_tokens = 2048
+temperature = 0.7
+
+[models.deepseek-v3-huoshan]
+model_name = "deepseek"
+model_key = "ep-20250409145253-qs7kp"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+api_key = "${HUOSHAN_API_KEY}"
+max_tokens = 2048
+temperature = 0.7
+
+[register.nacos]
+#本地测试
+host =  "127.0.0.1"
+#测试环境
+#host = "nacos-server"
+port = "8848"
+namespace = "public"
+service_name = "fastapi-service-greet-system"
+group_name = "DEFAULT_GROUP"
+heartbeat_interval = 5
+username = "nacos"
+password = "${NACOS_PASSWORD}"
+
+[service.greet-system]
+app_host = "0.0.0.0"
+app_port = "7860"

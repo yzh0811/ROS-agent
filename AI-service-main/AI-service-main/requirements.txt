@@ -1,0 +1,17 @@
+fastapi==0.115.12
+gradio==5.33.1
+langchain_core==0.3.64
+langchain_openai==0.3.21
+langgraph==0.4.8
+loguru==0.7.2
+nacos_sdk_python==2.0.6
+pandas==2.2.3
+openpyxl==3.1.2
+xlrd==2.0.1
+pydantic==2.11.5
+python-dotenv==1.1.0
+Requests==2.32.4
+sympy==1.13.3
+toml==0.10.2
+typing_extensions==4.14.0
+uvicorn==0.34.3

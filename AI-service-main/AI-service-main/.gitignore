@@ -1,0 +1,12 @@
+# 确保不提交.env文件
+configs/*_secret.toml
+logs
+*.log
+.idea
+files
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+
