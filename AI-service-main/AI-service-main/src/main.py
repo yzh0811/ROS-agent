@@ -22,6 +22,7 @@ from datetime import datetime
 import threading
 import sys
 import io
+import unicodedata
 
 # 申明全局变量 全局调用
 graph = None
@@ -142,6 +143,59 @@ def parse_llm_response_robust(result_content: str) -> Dict[str, str]:
     except Exception as e:
         logger.error(f"LLM响应解析失败: {str(e)}")
         return {}
+    
+def apply_similarity_fill(initial_mapping: dict, preprocessed_fields: list, threshold: float = 0.4, only_missing: bool = True) -> dict:
+    import re, unicodedata
+    def _norm(s: str) -> str:
+        if s is None: return ""
+        t = unicodedata.normalize("NFKC", str(s)).lower()
+        t = re.sub(r"[_\-\./\\]+", " ", t)
+        return re.sub(r"\s+", " ", t).strip()
+    def _tok(s: str):
+        return re.findall(r"[a-z0-9]+|[\u4e00-\u9fa5]+", _norm(s))
+    def _edit_sim(a: str, b: str) -> float:
+        a, b = _norm(a), _norm(b)
+        if not a and not b: return 1.0
+        if not a or not b: return 0.0
+        la, lb = len(a), len(b)
+        dp = [[0]*(lb+1) for _ in range(la+1)]
+        for i in range(la+1): dp[i][0] = i
+        for j in range(lb+1): dp[0][j] = j
+        for i in range(1, la+1):
+            for j in range(1, lb+1):
+                dp[i][j] = min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+(a[i-1]!=b[j-1]))
+        dist = dp[la][lb]
+        return 1 - dist / max(1, max(la, lb))
+    def _jaccard(a: str, b: str) -> float:
+        sa, sb = set(_tok(a)), set(_tok(b))
+        return (len(sa & sb) / len(sa | sb)) if sa and sb else 0.0
+    UNIT_HINTS = {"体积": ["cbm","m3","m³","立方","容积","cubic","vol"], "重量": ["kg","公斤","千克","吨","lb","wt","weight"], "件数": ["pcs","box","qty","count","箱","包","数量","件"]}
+    TOTAL_HINTS = ["总","合计","总计","total","sum"]
+    def _bonus(name: str, field: str) -> float:
+        n = _norm(name); b = 0.0
+        if field in UNIT_HINTS and any(h in n for h in UNIT_HINTS[field]): b += 0.2
+        if field in ["件数","体积","重量"] and any(h in n for h in TOTAL_HINTS): b += 0.2
+        return min(b, 0.4)
+
+    std_fields = ["运输日期","订单号","路顺","承运商","运单号","车型","发货方编号","发货方名称","收货方编码","收货方名称","商品编码","商品名称","件数","体积","重量"]
+    if not preprocessed_fields: return initial_mapping
+    cols = [f.get("name") for f in preprocessed_fields if f.get("name")]
+    used = set(v for v in initial_mapping.values() if v and v != "missing")
+    updated = dict(initial_mapping)
+
+    for f in std_fields:
+        if only_missing and updated.get(f) and updated[f] != "missing":
+            continue
+        best_name, best_score = None, 0.0
+        for name in cols:
+            if name in used: continue
+            score = 0.6*_edit_sim(name, f) + 0.4*_jaccard(name, f) + _bonus(name, f)
+            if score > best_score:
+                best_score, best_name = score, name
+        if best_name and best_score >= threshold:
+            updated[f] = best_name
+            used.add(best_name)
+    return updated
 
 def extract_mapping_from_text(text: str, standard_fields: List[str]) -> Dict[str, str]:
     """从文本中提取字段映射信息"""
@@ -480,6 +534,17 @@ def llm_map_to_standard_fields(state: FieldMappingState) -> FieldMappingState:
                         "role": "assistant",
                         "content": f"LLM字段映射完成，映射了 {len([v for v in initial_mapping.values() if v != 'missing'])} 个字段，置信度: 85%"
                     })
+                    
+                    # 相似度精排补全（仅补全missing，不覆盖LLM已有映射）
+                    try:
+                        pre_fields = state.get("preprocessed_fields", [])
+                        sim_updated = apply_similarity_fill(state["initial_mapping"], pre_fields, threshold=0.4, only_missing=True)
+                        if sim_updated != state["initial_mapping"]:
+                            filled_cnt = len([1 for k in sim_updated if sim_updated[k] != "missing" and state["initial_mapping"].get(k, "missing") == "missing"]) 
+                            logger.info(f"🔍 [相似度补全] 在LLM结果基础上补全 {filled_cnt} 个字段")
+                            state["initial_mapping"] = sim_updated
+                    except Exception as _e:
+                        logger.warning(f"⚠️ [相似度补全] LLM后补全失败: {_e}")
                 else:
                     # LLM解析失败，尝试混合策略
                     logger.warning("⚠️ LLM响应解析失败，尝试混合策略")
@@ -565,15 +630,21 @@ def rule_based_mapping_fallback(state: FieldMappingState) -> FieldMappingState:
                             logger.info(f"🔍 [规则回退] 智能补充发货方名称: {field_name}")
                             break
         
-        # 确保所有标准字段都有映射
-        standard_fields = [
-            "运输日期", "订单号", "路顺", "承运商", "运单号", "车型", 
-            "发货方编号", "发货方名称", "收货方编码", "收货方名称", 
-            "商品编码", "商品名称", "件数", "体积", "重量"
-        ]
-        for field in standard_fields:
-            if field not in initial_mapping:
-                initial_mapping[field] = "missing"
+        # 相似度精排补全（仅补全missing）
+        try:
+            pre_fields = state.get("preprocessed_fields", [])
+            sim_updated = apply_similarity_fill(initial_mapping, pre_fields, threshold=0.4, only_missing=True)
+            if sim_updated != initial_mapping:
+                filled_cnt = len([1 for k in sim_updated if sim_updated[k] != "missing" and initial_mapping.get(k, "missing") == "missing"]) 
+                logger.info(f"🔍 [相似度补全] 在规则降级结果基础上补全 {filled_cnt} 个字段")
+                initial_mapping = sim_updated
+        except Exception as _e:
+            logger.warning(f"⚠️ [相似度补全] 规则降级后补全失败: {_e}")
+        
+        # # 确保所有标准字段都有映射
+        # for field in standard_fields:
+        #     if field not in initial_mapping:
+        #         initial_mapping[field] = "missing"
         
         state["initial_mapping"] = initial_mapping
         state["messages"].append({"role": "system", "content": f"规则匹配降级完成，映射了 {len([v for v in initial_mapping.values() if v != 'missing'])} 个字段"})
