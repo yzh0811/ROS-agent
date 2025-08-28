@@ -7,6 +7,7 @@ from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
+from src.utils.progress_tracker import progress_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,9 @@ def get_rule_based_mapping(state: FieldMappingState) -> Dict[str, str]:
 
 def preprocess_fields(state: FieldMappingState) -> FieldMappingState:
     try:
+        # 开始进度跟踪
+        step = progress_tracker.start_step("preprocess_fields")
+        
         excel_data = state["excel_data"]
         preprocessed_fields = []
         if isinstance(excel_data, list) and len(excel_data) > 0:
@@ -251,15 +255,27 @@ def preprocess_fields(state: FieldMappingState) -> FieldMappingState:
             }
             preprocessed_fields.append(field_info)
         state["preprocessed_fields"] = preprocessed_fields
+        
+        # 完成进度跟踪
+        progress_tracker.complete_step("preprocess_fields", {
+            "processed_fields": len(preprocessed_fields),
+            "total_fields": len(excel_data)
+        })
+        
         state["messages"].append({"role": "system", "content": f"字段预处理完成，共处理 {len(preprocessed_fields)} 个有效字段"})
         return state
     except Exception as e:
-        state["errors"].append(f"字段预处理失败: {str(e)}")
+        error_msg = f"字段预处理失败: {str(e)}"
+        state["errors"].append(error_msg)
+        progress_tracker.fail_step("preprocess_fields", error_msg)
         return state
 
 
 def classify_fields(state: FieldMappingState) -> FieldMappingState:
     try:
+        # 开始进度跟踪
+        step = progress_tracker.start_step("classify_fields")
+        
         preprocessed_fields = state["preprocessed_fields"]
         classified_fields = []
         for field in preprocessed_fields:
@@ -278,15 +294,27 @@ def classify_fields(state: FieldMappingState) -> FieldMappingState:
             field["category"] = category
             classified_fields.append(field)
         state["classified_fields"] = classified_fields
+        
+        # 完成进度跟踪
+        progress_tracker.complete_step("classify_fields", {
+            "classified_fields": len(classified_fields),
+            "categories": list(set(f["category"] for f in classified_fields))
+        })
+        
         state["messages"].append({"role": "system", "content": f"字段分类完成，共分类 {len(classified_fields)} 个字段"})
         return state
     except Exception as e:
-        state["errors"].append(f"字段分类失败: {str(e)}")
+        error_msg = f"字段分类失败: {str(e)}"
+        state["errors"].append(error_msg)
+        progress_tracker.fail_step("classify_fields", error_msg)
         return state
 
 
 def llm_map_to_standard_fields(state: FieldMappingState) -> FieldMappingState:
     try:
+        # 开始进度跟踪
+        step = progress_tracker.start_step("llm_mapping")
+        
         from src.prompts.prompts import test_prompt
         from src.configs.model_init import chat_model
         excel_data = state["excel_data"]
@@ -320,15 +348,29 @@ def llm_map_to_standard_fields(state: FieldMappingState) -> FieldMappingState:
                         "role": "system",
                         "content": f"混合策略完成，映射了 {len([v for v in initial_mapping.values() if v != 'missing'])} 个字段",
                     })
+                
+                # 完成进度跟踪
+                progress_tracker.complete_step("llm_mapping", {
+                    "mapped_fields": len([v for v in initial_mapping.values() if v != 'missing']),
+                    "total_fields": len(initial_mapping),
+                    "confidence_score": state.get("confidence_score", 0)
+                })
+                
             except Exception as parse_error:
-                state["errors"].append(f"LLM响应处理失败: {str(parse_error)}")
+                error_msg = f"LLM响应处理失败: {str(parse_error)}"
+                state["errors"].append(error_msg)
+                progress_tracker.fail_step("llm_mapping", error_msg)
                 return rule_based_mapping_fallback(state)
         except Exception as llm_error:
-            state["errors"].append(f"LLM调用失败: {str(llm_error)}")
+            error_msg = f"LLM调用失败: {str(llm_error)}"
+            state["errors"].append(error_msg)
+            progress_tracker.fail_step("llm_mapping", error_msg)
             return rule_based_mapping_fallback(state)
         return state
     except Exception as e:
-        state["errors"].append(f"LLM字段匹配失败: {str(e)}")
+        error_msg = f"LLM字段匹配失败: {str(e)}"
+        state["errors"].append(error_msg)
+        progress_tracker.fail_step("llm_mapping", error_msg)
         return rule_based_mapping_fallback(state)
 
 
@@ -522,6 +564,9 @@ def calculate_mapping_score(standard_field: str, field: Dict[str, Any]) -> float
 
 def resolve_conflicts_and_missing(state: FieldMappingState) -> FieldMappingState:
     try:
+        # 开始进度跟踪
+        step = progress_tracker.start_step("resolve_conflicts")
+        
         initial_mapping = state.get("initial_mapping", {})
         logger.info(f"🔍 [冲突处理] 开始处理冲突与缺失")
         logger.info(f"🔍 [冲突处理] 冲突处理前的映射: {json.dumps(initial_mapping, ensure_ascii=False)}")
@@ -563,7 +608,7 @@ def resolve_conflicts_and_missing(state: FieldMappingState) -> FieldMappingState
                         field_scores[field] = score
                         logger.info(f"🔍 [冲突处理] {field} 优先级分数: {score}")
                     else:
-                        field_scores[field] = 999
+                        field_scores[field] = score
                         logger.info(f"🔍 [冲突处理] {field} 优先级分数: 999 (不在优先级列表中)")
                 best_field = max(standard_fields, key=lambda x: priority_order.index(x) if x in priority_order else 999)
                 logger.info(f"🔍 [冲突处理] 选择保留: {best_field} (优先级分数: {field_scores[best_field]})")
@@ -579,15 +624,27 @@ def resolve_conflicts_and_missing(state: FieldMappingState) -> FieldMappingState
             if initial_mapping.get(field) != final_mapping.get(field):
                 logger.warning(f"⚠️ [冲突处理] {field} 状态发生变化: {initial_mapping.get(field)} -> {final_mapping.get(field)}")
         state["final_mapping"] = final_mapping
+        
+        # 完成进度跟踪
+        progress_tracker.complete_step("resolve_conflicts", {
+            "conflicts_resolved": conflict_count,
+            "final_mapping_fields": len([v for v in final_mapping.values() if v != "missing"])
+        })
+        
         state["messages"].append({"role": "system", "content": "冲突与缺失处理完成"})
         return state
     except Exception as e:
-        state["errors"].append(f"冲突与缺失处理失败: {str(e)}")
+        error_msg = f"冲突与缺失处理失败: {str(e)}"
+        state["errors"].append(error_msg)
+        progress_tracker.fail_step("resolve_conflicts", error_msg)
         return state
 
 
 def validate_mapping(state: FieldMappingState) -> FieldMappingState:
     try:
+        # 开始进度跟踪
+        step = progress_tracker.start_step("validate_mapping")
+        
         final_mapping = state["final_mapping"]
         validation_results = {"passed": True, "issues": []}
         important_fields = ["订单号", "运单号", "运输日期"]
@@ -601,15 +658,28 @@ def validate_mapping(state: FieldMappingState) -> FieldMappingState:
             validation_results["issues"].append("缺少所有数量相关字段")
         validation_results["passed"] = True
         state["validation_results"] = validation_results
+        
+        # 完成进度跟踪
+        progress_tracker.complete_step("validate_mapping", {
+            "validation_passed": validation_results["passed"],
+            "issues_count": len(validation_results["issues"]),
+            "missing_important": missing_important
+        })
+        
         state["messages"].append({"role": "system", "content": f"映射验证完成，通过: {validation_results['passed']}"})
         return state
     except Exception as e:
-        state["errors"].append(f"映射验证失败: {str(e)}")
+        error_msg = f"映射验证失败: {str(e)}"
+        state["errors"].append(error_msg)
+        progress_tracker.fail_step("validate_mapping", error_msg)
         return state
 
 
 def calculate_confidence_score(state: FieldMappingState) -> FieldMappingState:
     try:
+        # 开始进度跟踪
+        step = progress_tracker.start_step("calculate_confidence")
+        
         final_mapping = state["final_mapping"]
         total_fields = len(final_mapping)
         mapped_fields = len([v for v in final_mapping.values() if v != "missing"])
@@ -622,15 +692,29 @@ def calculate_confidence_score(state: FieldMappingState) -> FieldMappingState:
         confidence_score = (0.6 * important_score + 0.3 * other_score + 0.1 * validation_score)
         confidence_score = round(confidence_score * 100, 1)
         state["confidence_score"] = confidence_score
+        
+        # 完成进度跟踪
+        progress_tracker.complete_step("calculate_confidence", {
+            "confidence_score": confidence_score,
+            "coverage_rate": coverage_rate,
+            "mapped_fields": mapped_fields,
+            "total_fields": total_fields
+        })
+        
         state["messages"].append({"role": "system", "content": f"准确率评分完成: {confidence_score}%"})
         return state
     except Exception as e:
-        state["errors"].append(f"准确率评分失败: {str(e)}")
+        error_msg = f"准确率评分失败: {str(e)}"
+        state["errors"].append(error_msg)
+        progress_tracker.fail_step("calculate_confidence", error_msg)
         return state
 
 
 def generate_output(state: FieldMappingState) -> FieldMappingState:
     try:
+        # 开始进度跟踪
+        step = progress_tracker.start_step("generate_output")
+        
         final_mapping = state.get("final_mapping", {})
         validation_results = state.get("validation_results", {"passed": True, "issues": []})
         confidence_score = state.get("confidence_score", 0.0)
@@ -649,16 +733,45 @@ def generate_output(state: FieldMappingState) -> FieldMappingState:
         }
         output = {"mapping": final_mapping, "analysis": analysis, "confidence": int(confidence_score)}
         state["messages"].append({"role": "assistant", "content": json.dumps(output, ensure_ascii=False)})
+        
+        # 完成进度跟踪
+        progress_tracker.complete_step("generate_output", {
+            "output_generated": True,
+            "mapping_fields": len([v for v in final_mapping.values() if v != 'missing']),
+            "confidence_score": confidence_score
+        })
+        
+        # 完成整个流程
+        progress_tracker.finish()
+        
         return state
     except Exception as e:
-        state["errors"].append(f"结果生成失败: {str(e)}")
+        error_msg = f"结果生成失败: {str(e)}"
+        state["errors"].append(error_msg)
+        progress_tracker.fail_step("generate_output", error_msg)
         return state
 
 
 def update_iteration_count(state: FieldMappingState) -> FieldMappingState:
-    state["iteration_count"] = state.get("iteration_count", 0) + 1
-    state["messages"].append({"role": "system", "content": f"开始第 {state['iteration_count']} 次迭代"})
-    return state
+    try:
+        # 开始进度跟踪
+        step = progress_tracker.start_step("update_iteration")
+        
+        state["iteration_count"] = state.get("iteration_count", 0) + 1
+        
+        # 完成进度跟踪
+        progress_tracker.complete_step("update_iteration", {
+            "iteration_count": state["iteration_count"],
+            "max_iterations": 3
+        })
+        
+        state["messages"].append({"role": "system", "content": f"开始第 {state['iteration_count']} 次迭代"})
+        return state
+    except Exception as e:
+        error_msg = f"迭代计数更新失败: {str(e)}"
+        state["errors"].append(error_msg)
+        progress_tracker.fail_step("update_iteration", error_msg)
+        return state
 
 
 def should_retry_mapping(state: FieldMappingState) -> str:

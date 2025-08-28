@@ -24,6 +24,7 @@ from src.graphs.field_mapping_graph import create_field_mapping_graph as create_
 from src.graphs.chat_graph import create_graph as create_graph_ext
 from src.schemas.api_models import Message, ChatCompletionRequest, ChatCompletionResponseChoice, ChatCompletionResponse
 from src.utils.response_formatter import format_response
+from src.utils.progress_tracker import progress_tracker
 
 # 全局对象
 graph = None
@@ -100,6 +101,9 @@ async def field_mapping(request: ChatCompletionRequest):
         else:
             raise HTTPException(status_code=400, detail="缺少Excel数据或文件名")
 
+        # 重置进度跟踪器
+        progress_tracker.reset()
+        
         initial_state: Dict[str, Any] = {
             "excel_data": excel_data,
             "preprocessed_fields": [],
@@ -144,6 +148,17 @@ async def field_mapping(request: ChatCompletionRequest):
     except Exception as e:
         logger.error(f"处理字段映射请求时出错: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/field-mapping/progress")
+async def get_field_mapping_progress():
+    """获取字段映射进度"""
+    try:
+        progress = progress_tracker.get_progress()
+        return JSONResponse(content=progress)
+    except Exception as e:
+        logger.error(f"获取进度失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取进度失败: {str(e)}")
+
 
 @app.post("/greet/stream")
 async def chat_completions(request: ChatCompletionRequest):

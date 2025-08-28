@@ -56,6 +56,20 @@ class AppConfig(BaseConfig):
     app_port: str
 
 
+@dataclass
+class FieldMappingConfig(BaseConfig):
+    max_iterations: int
+    confidence_threshold: float
+    retry_delay: float
+    enable_logging: bool
+    save_intermediate_results: bool
+    standard_fields: list
+    field_priority_order: list
+    required_fields: list
+    date_fields: list
+    numeric_fields: list
+
+
 # ------------------- 配置管理器 -------------------
 class ConfigManager:
     _instance = None
@@ -79,6 +93,10 @@ class ConfigManager:
         "service": {
             "config_class": AppConfig,
             "required_fields": ["app_host", "app_port"]
+        },
+        "field_mapping": {
+            "config_class": FieldMappingConfig,
+            "required_fields": ["max_iterations", "confidence_threshold", "retry_delay", "enable_logging", "save_intermediate_results", "standard_fields", "field_priority_order", "required_fields", "date_fields", "numeric_fields"]
         },
     }
 
@@ -208,6 +226,10 @@ class ConfigManager:
     def get_service_config(self, name: str) -> Optional[AppConfig]:
         service_select = self.get_config("service", name)
         return service_select
+
+    def get_field_mapping_config(self, name: str = "default") -> Optional[FieldMappingConfig]:
+        field_mapping_config = self.get_config("field_mapping", name)
+        return field_mapping_config
 
 
     def get_available_sections(self) -> list:

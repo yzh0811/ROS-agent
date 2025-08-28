@@ -54,3 +54,15 @@ password = "${NACOS_PASSWORD}"
 [service.greet-system]
 app_host = "0.0.0.0"
 app_port = "7860"
+
+[field_mapping.default]
+max_iterations = 3
+confidence_threshold = 0.8
+retry_delay = 1.0
+enable_logging = true
+save_intermediate_results = false
+standard_fields = ["运输日期", "订单号", "路顺", "承运商", "运单号", "车型", "发货方编号", "发货方名称", "收货方编码", "收货方名称", "商品编码", "商品名称", "件数", "体积", "重量"]
+field_priority_order = ["订单号", "运单号", "运输日期", "件数", "体积", "重量"]
+required_fields = ["订单号", "运单号"]
+date_fields = ["运输日期"]
+numeric_fields = ["件数", "体积", "重量"]
