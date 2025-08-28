@@ -25,6 +25,7 @@ from src.graphs.chat_graph import create_graph as create_graph_ext
 from src.schemas.api_models import Message, ChatCompletionRequest, ChatCompletionResponseChoice, ChatCompletionResponse
 from src.utils.response_formatter import format_response
 from src.utils.progress_tracker import progress_tracker
+from src.utils.data_quality_reporter import data_quality_reporter
 
 # 全局对象
 graph = None
@@ -158,6 +159,53 @@ async def get_field_mapping_progress():
     except Exception as e:
         logger.error(f"获取进度失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取进度失败: {str(e)}")
+
+
+@app.post("/field-mapping/analyze-quality")
+async def analyze_data_quality(request: ChatCompletionRequest):
+    """分析Excel数据质量"""
+    try:
+        excel_data = None
+        if request.excelData:
+            try:
+                excel_data = json.loads(request.excelData)
+                logger.info("使用提供的Excel数据进行分析")
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Excel数据格式错误")
+        elif request.excelFilename:
+            try:
+                excel_result = excel_processor.read_excel_to_json(request.excelFilename)
+                excel_data = excel_result["data"]
+                logger.info(f"成功读取Excel文件进行分析，共{excel_result['total_rows']}行数据")
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Excel文件不存在: {request.excelFilename}")
+            except Exception as e:
+                logger.error(f"读取Excel文件失败: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"读取Excel文件失败: {str(e)}")
+        else:
+            raise HTTPException(status_code=400, detail="缺少Excel数据或文件名")
+        
+        # 分析数据质量
+        quality_report = data_quality_reporter.analyze_excel_data(excel_data)
+        
+        if "error" in quality_report:
+            raise HTTPException(status_code=500, detail=quality_report["error"])
+        
+        # 生成HTML报告
+        html_report = data_quality_reporter.generate_html_report()
+        
+        response = {
+            "success": True,
+            "quality_report": quality_report,
+            "html_report": html_report,
+            "message": "数据质量分析完成"
+        }
+        
+        return JSONResponse(content=response)
+        
+    except Exception as e:
+        logger.error(f"数据质量分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/greet/stream")
